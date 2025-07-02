@@ -1,0 +1,113 @@
+/* === VARIÁVEIS PARA MODO CLARO (PADRÃO) === */
+:root {
+  --bs-primary: #2D3F50; /* Azul escuro (para modo claro) */
+  --bs-secondary: #5C768D; /* Um tom mais claro de azul para secundário */
+  --bs-body-bg: #f5f7f3;
+  --bs-body-color: #212529; /* Cor do texto do corpo para modo claro */
+  --bs-link-color: #2D3F50;
+  --bs-link-hover-color: #1F2D3A; /* Azul escuro mais escuro para hover */
+  --bs-dropdown-bg: #2D3F50;
+  --bs-dropdown-color: #ffffff;
+  --bs-dropdown-hover-bg: #1F2D3A;
+}
+
+/* === VARIÁVEIS PARA MODO ESCURO === */
+body[data-bs-theme="dark"],
+body.quarto-dark {
+  background-color: #121212 !important; /* Fundo preto */
+  color: #ffffff !important;            /* Texto branco do corpo para modo escuro */
+
+  --bs-primary: #2D3F50; /* AZUL ESCURO PRINCIPAL PARA MODO ESCURO */
+  --bs-secondary: #5C768D; /* Um tom mais claro de azul para secundário */
+  --bs-body-bg: #121212;
+  --bs-body-color: #ffffff; /* Cor do texto do corpo para modo escuro */
+  --bs-link-color: #2D3F50;
+  --bs-link-hover-color: #3C5970; /* Azul escuro mais claro para hover em modo escuro */
+  --bs-dropdown-bg: #2D3F50;
+  --bs-dropdown-color: #ffffff;
+  --bs-dropdown-hover-bg: #1F2D3A;
+}
+
+/* === NAVBAR === */
+.navbar, .navbar-brand, .navbar-nav .nav-link.active {
+  background-color: var(--bs-primary) !important;
+  color: white !important;
+}
+
+.navbar a, .navbar a:visited {
+  color: white !important;
+}
+
+.navbar a:hover {
+  color: #D3DCE5 !important; /* Um tom muito claro de azul para hover */
+}
+
+/* === MENU SUSPENSO === */
+.dropdown-menu {
+  background-color: var(--bs-dropdown-bg) !important;
+  border: none;
+}
+
+.dropdown-menu .dropdown-item {
+  color: var(--bs-dropdown-color) !important;
+}
+
+.dropdown-menu .dropdown-item:hover,
+.dropdown-menu .dropdown-item:focus {
+  background-color: var(--bs-dropdown-hover-bg) !important;
+  color: var(--bs-dropdown-color) !important;
+}
+
+/* === BOTÕES PRIMÁRIOS === */
+.btn-primary {
+  background-color: var(--bs-primary);
+  border-color: var(--bs-primary);
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: var(--bs-link-hover-color);
+  border-color: var(--bs-link-hover-color);
+  color: white;
+}
+
+/* === TÍTULOS === */
+h1, h2, h3, h4 {
+  color: var(--bs-primary); /* Por padrão, usa a cor primária (azul escuro no modo claro) */
+}
+
+/* NOVO: Títulos em branco no modo escuro */
+body[data-bs-theme="dark"] h1,
+body[data-bs-theme="dark"] h2,
+body[data-bs-theme="dark"] h3,
+body[data-bs-theme="dark"] h4,
+body.quarto-dark h1,
+body.quarto-dark h2,
+body.quarto-dark h3,
+body.quarto-dark h4 {
+  color: var(--bs-body-color) !important; /* USA A COR DO TEXTO DO CORPO (BRANCO) */
+}
+
+
+/* === RODAPÉ DO QUARTO === */
+.nav-footer {
+  background-color: var(--bs-primary) !important;
+  border-top: none !important;
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+  color: #D3DCE5 !important; /* Um tom muito claro de azul */
+}
+
+.nav-footer p,
+.nav-footer a,
+.nav-footer .nav-footer-left,
+.nav-footer .nav-footer-right {
+  color: #D3DCE5 !important;
+}
+
+/* === CARDS === */
+.card {
+  border: 1px solid #A2B2C2; /* Um tom mais claro de azul para a borda do card */
+  background-color: #ffffff;
+}

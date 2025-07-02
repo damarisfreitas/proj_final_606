@@ -1,0 +1,1176 @@
+---
+title: "Análise dos dados do experimento de eficiência de inseticidas no controle de lagartas da traça-do-tomateiro"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+warning: false
+message: false
+---
+
+# Objetivos e hipóteses
+
+Por meio da análise dos dados, objetivou-se determinar a eficiência de inseticidas no controle de lagartas de *Phthorimaea absoluta*.
+
+## Hipóteses testadas
+
+-   **Hipótese nula (H~0~):** Não há diferença significativa entre os tratamentos. A média da eficiência dos tratamentos no controle é igual para todos os inseticidas.
+
+-   **Hipótese alternativa (H~a~):** Pelo menos um dos inseticidas apresenta um desempenho significativamente melhor do que o controle, em comparação com os demais.
+
+# Análise das variáveis resposta
+
+## Pré-análise dos dados
+
+**Pacotes**: os seguintes pacotes R foram utilizados para as análises.
+
+```{r}
+library(readxl)
+library(ggplot2)
+library(tidyverse)
+library(scales)
+library(forcats)
+library(stringr)
+library(plotly)
+library(readr)
+library(emmeans)
+library(multcomp)
+library(multcompView)
+library(DHARMa)
+library(car)
+library(glmmTMB)
+library(lme4)
+library(performance)
+library(MASS)
+library(dunn.test)
+```
+
+**Carregamento dos dados:** como o dataframe contendo os dados de eficiência dos inseticidas estava localizado em uma planilha Excel no desktop, para o carregamento dos dados, foi necessário utilizar a função `read_excel` do pacote `readxl`. O dataframe foi atribuído ao objeto denominado `dados`.
+
+```{r}
+dados <- read_excel("teste_lagarta_traça.xlsx")
+
+dados
+```
+
+## Análise visual dos dados
+
+Usando o pacote `ggplot2`, foi explorado visualmente, por meio de diferentes gráficos, os dados de eficiência dos inseticidas.
+
+**Gráfico de barras:** primeiramente, foi visualizada a proporção de mortalidade de insetos em cada tratamento. A proporção de insetos mortos foi calculada pela fórmula:
+
+$PM = TM / (TV + TM)$
+
+PM = proporção de mortos
+
+TM = total de insetos mortos no tratamento
+
+TV = total de insetos vivos no tratamento
+
+```{r}
+proporcao_mortos <- dados |>
+  group_by(tratamento) |>
+  summarise(
+    TM = sum(mortos, na.rm = TRUE),
+    TV = sum(vivos, na.rm = TRUE)
+  ) |>
+  mutate(
+    tratamento = str_to_title(tratamento),
+    PM = TM / (TM + TV)
+  ) |>
+  ungroup() |>
+  arrange(PM) |>
+  mutate(tratamento = factor(tratamento, levels = tratamento)) 
+     
+print(proporcao_mortos)
+
+grafico_proporcao <- ggplot(proporcao_mortos, aes(x = tratamento, y = PM)) +
+  geom_col(fill = "darkgreen") +
+  labs(
+    title = "Proporção de insetos mortos por tratamento",
+    x = "Tratamentos",
+    y = "Proporção de mortos"
+  ) +
+  ylim(0, 1) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.x = element_blank(),  
+    panel.grid.minor.x = element_blank())
+
+grafico_interativo <- plotly::ggplotly(grafico_proporcao) |>
+  plotly::config(displayModeBar = FALSE)
+
+grafico_interativo
+```
+
+**Adição de facetas:** a visualização de cada tratamento individualmente foi possibilitada pela adição de facetas, permitindo analisar o comportamento de cada repetição (número de insetos mortos). Isso foi feito com a função `facet_wrap`.
+
+```{r}
+dados |>
+  ggplot(aes(repetição, mortos))+
+  geom_col(fill = "darkgreen")+
+  labs(x = "Repetições",
+       y = "Número de insetos mortos")+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank())+
+  scale_y_continuous(limits = c(0, 10), n.breaks = 3)+
+  facet_wrap(~ tratamento, labeller = labeller(tratamento = tools::toTitleCase))
+```
+
+## Mortalidade
+
+A mortalidade é descrita como:
+
+$MT = M / T$
+
+MT = mortalidade
+
+M = mortos
+
+T = total
+
+```{r}
+dados <- dados |>
+  mutate(
+    mortalidade = mortos / total)
+
+media_mortalidade <- dados |>
+  group_by(tratamento) |>
+  summarise(
+    mortalidade_media = mean(mortalidade, na.rm = TRUE),
+    .groups = "drop")
+
+mortalidade_controle <- media_mortalidade |>
+  filter(grepl("controle", tolower(tratamento))) |>
+  pull(mortalidade_media)
+
+print(mortalidade_controle)
+print(media_mortalidade)
+```
+
+# Análises estatísticas
+
+## Análise das pressuposições da ANOVA
+
+Para que a ANOVA seja realizada é necessário que ela se enquandre nos seguintes pressupostos:
+
+-   Normalidade dos resíduos
+
+-   Homogeneidade de variâncias (homocedasticidade)
+
+-   Aditividade do modelo
+
+```{r}
+modelo_anova <- aov(mortalidade ~ tratamento, data = dados)
+
+summary(modelo_anova)
+```
+
+**Histograma dos resíduos**: foi criado o histograma dos resíduos da ANOVA, criado com a função `hist` a partir do objeto `modelo_anova`, serve para visualizar a distribuição desses resíduos. Isso permite verificar se eles são aproximadamente normais, uma suposição fundamental para a validade dos resultados da ANOVA.
+
+```{r}
+hist(residuals(modelo_anova))
+```
+
+```{r}
+plot(simulateResiduals(modelo_anova))
+```
+
+**Normalidade dos resíduos:** foi verificada pelo Shapiro teste, executado a partir da função `shapiro.test` a partir do objeto `modelo_anova`.
+
+```{r}
+shapiro.test(residuals(modelo_anova))
+```
+
+Como p-valor \< 0.05, os resíduos não possuem normalidade.
+
+**Homogeneidade das variâncias:** foi testada pelo teste de Levene, por meio da função `leveneTest` aplicada a mortalidade por tratamento.
+
+```{r}
+car::leveneTest(mortalidade ~ tratamento, data = dados)
+```
+
+Como o p-valor \< 0.05, as variâncias são heterogêneas.
+
+Assim, observamos que os dados não atendem as pressuposições da ANOVA. Assim, se torna necessária a transformação dos dados ou a utilização de outros testes e modelos para a análise de dados. Com isso, apresentamos as duas formas de análise dos dados.
+
+## Transformação dos dados
+
+Os dados foram transformados pela função `anscombe = asin(sqrt(x))` (transformação angular (ou de Anscombe)). É uma transformação usada para dados de proporção
+
+```{r}
+dados <- dados %>%
+  mutate(
+    anscombe = asin(sqrt((mortos + 3/8) / (total + 3/4)))
+  )
+
+print(dados)
+```
+
+**Aplicando a ANOVA novamente**
+
+```{r}
+modelo_anova2 <- aov(anscombe ~ tratamento, data = dados)
+```
+
+**Histograma dos resíduos**
+
+```{r}
+hist(residuals(modelo_anova2))
+```
+
+**Normalidade dos resíduos**
+
+```{r}
+shapiro.test(residuals(modelo_anova2))
+```
+
+Como o p-valor \< 0.05, os resíduos não são normais.
+
+**Homogeneidade das variâncias**
+
+```{r}
+car::leveneTest(anscombe ~ tratamento, data = dados)
+```
+
+Como o p-valor \< 0.05, as variâncias são heterogêneas.
+
+Assim, observamos que a transformação dos dados não foi suficiente para que eles atendessem as pressuposições da ANOVA.
+
+## **Teste de Kruskal-Wallis**
+
+O teste de Kruskal-Wallis é um teste não-paramétrico que verifica se há diferenças significativas entre os tratamentos analisados. Assim, ele foi aplicado aos dados de mortalidade.
+
+```{r}
+kruskal.test(mortalidade ~ tratamento, data = dados)
+```
+
+Como p-valor \< 0.05, há diferenças significativas na mortalidade entre os tratamentos.
+
+### Comparações múltiplas
+
+Para realizar as comparações dos tratamentos foi realizado o teste de Dunn.
+
+```{r}
+teste_dunn <- dunn.test(dados$mortalidade, dados$tratamento, method = "holm")
+```
+
+```{r}
+comparacoes <- teste_dunn$comparisons
+pvals <- teste_dunn$P.adjusted
+grupos <- unique(as.character(dados$tratamento))
+matriz_p <- matrix(1, nrow = length(grupos), ncol = length(grupos),
+                   dimnames = list(grupos, grupos))
+
+for (i in seq_along(comparacoes)) {
+  par <- unlist(strsplit(comparacoes[i], " - "))
+  matriz_p[par[1], par[2]] <- pvals[i]
+  matriz_p[par[2], par[1]] <- pvals[i]
+}
+
+letras <- multcompLetters(matriz_p)$Letters
+letras_df <- data.frame(tratamento = names(letras), letra = letras)
+
+summary_ic <- dados %>%
+  group_by(tratamento) %>%
+  summarise(
+    media = mean(mortalidade, na.rm = TRUE),
+    n = n(),
+    sd = sd(mortalidade, na.rm = TRUE),
+    se = sd / sqrt(n),
+    ic = qt(0.975, df = n - 1) * se
+  )
+
+plot_df <- summary_ic %>%
+  left_join(letras_df, by = "tratamento") %>%
+  mutate(tratamento = str_to_title(tratamento))  
+
+ggplot(plot_df, aes(x = tratamento, y = media)) +
+  geom_errorbar(aes(ymin = media - ic, ymax = media + ic), width = 0.2) +
+  geom_point(size = 3) +
+  geom_text(aes(label = letra, y = media + ic + 0.03), size = 5) +
+  labs(
+    title = "Mortalidade por tratamento (Teste de Dunn)",
+    x = "Tratamento",
+    y = "Mortalidade"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+## Modelos alternativos
+
+Uma forma de analisar os dados sem transformação é a utilização de modelos que não exigem características semelhantes a da ANOVA. Dentre eles pode ser utilizado o GLM e GLMM.
+
+### Ajuste dos dados
+
+Como possuimos dados com valores de 0 ou 100% (ou seja, tudo morto ou tudo vivo), o modelo encontra problemas. Assim, os dados foram ajustado adicionando `0.5` ao número de mortos e vivos. A função `cbind` foi utilizada, pois estamos tratando de contagem de eventos (morto x vivo).
+
+```{r}
+dados$tratamento <- as.factor(dados$tratamento)
+
+dados_ajustados <- dados |>
+  dplyr::filter(mortos + vivos > 0) |>  
+  dplyr::mutate(
+    mortos_ajustados = mortos + 0.5,
+    vivos_ajustados = vivos + 0.5,
+    resposta_binomial = cbind(mortos_ajustados, vivos_ajustados))
+```
+
+### GLM - Modelo linear generalizado
+
+Inicialmente, foi testado o modelo com **distribuição binomial**. Esse modelo é indicado quando os dados são proporcionais (insetos mortos / vivos). Com isso, é possível verificar se há diferença significativa entre os inseticidas testados quanto à mortalidade dos insetos. O argumento `family = binomial` foi utilizada por ter apenas dois resultados possíveis (sucesso ou fracasso). O link `logit` foi utilizado por se tratar de dados de proporção.
+
+```{r}
+modelo_glm <- glm(resposta_binomial ~ tratamento,
+                                 family = binomial(link = "logit"),
+                                 data = dados_ajustados)
+
+summary(modelo_glm)
+
+anova_glm <- anova(modelo_glm, data = dados_ajustados)
+print(anova_glm)
+
+plot(simulateResiduals(modelo_glm))
+qqnorm(residuals(modelo_glm))
+qqline(residuals(modelo_glm))
+```
+
+```{r}
+res_dev_binomial <- sum(residuals(modelo_glm, type = "deviance")^2)
+df_binomial <- df.residual(modelo_glm)
+dispersion_param_binomial <- res_dev_binomial / df_binomial
+print(dispersion_param_binomial)
+```
+
+A análise do Modelo Linear Generalizado (GLM) com família binomial revelou um parâmetro de dispersão residual de **0.3272128**. Este valor, que é menor que 1, indicando a presença de **subdispersão** nos dados. Embora o teste de dispersão do DHARMa não tenha sido estatisticamente significativo (p = 0.184), a magnitude do parâmetro estimado (0.327) sugere que a variabilidade observada é consideravelmente menor do que a esperada sob a distribuição binomial padrão. Assim, a family foi ajustada para `quasibinomial`.
+
+**Distribuição quasibinomial**: o modelo GLM foi ajustado usando o argumento `family = quasibinomial`. Ele permite que o parâmetro de dispersão dos dados seja estimado, corrigindo os erros padrão e os testes de significância.
+
+```{r}
+modelo_glm_qb <- glm(resposta_binomial ~ tratamento,
+                                 family = quasibinomial(link = "logit"),
+                                 data = dados_ajustados)
+
+summary(modelo_glm_qb)
+
+m <- emmeans(modelo_glm_qb, ~ tratamento, type = "response")
+print(m)
+
+cld_results <- cld(m, adjust = "Tukey", Letters = LETTERS)
+print(cld_results)
+
+cld_df <- as.data.frame(cld_results) |> 
+  dplyr::rename(group_sig = .group,
+                emmean = prob,
+                lower.CL = asymp.LCL,
+                upper.CL = asymp.UCL)
+
+cld_df <- cld_df |>
+  mutate(tratamento = str_to_sentence(tratamento))
+
+
+ggplot(cld_df, aes(x = reorder(tratamento, emmean), y = emmean, fill = group_sig)) + 
+  geom_bar(stat = "identity", fill = "darkgreen", color = "black") +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.2, position = position_dodge(0.9)) +
+  geom_text(aes(y = upper.CL, label = group_sig),
+          vjust = -0.5, size = 4, color = "black")+
+  labs(title = "Probabilidade estimada de resposta por tratamento (GLM Quasibinomial)",
+       x = "Tratamentos",
+       y = "Probabilidade estimada (EMM)") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylim(0, max(cld_df$upper.CL) * 1)
+```
+
+```{r}
+dispersion_param_quasibinomial <- summary(modelo_glm_qb)$dispersion
+print(dispersion_param_quasibinomial)
+```
+
+O valor **0.3183159** indica que os dados têm menos variabilidade (subdispersão) do que o observado pelo modelo binomial simples. O modelo `quasibinomial` utiliza esse valor para ajustar os p-valores e erros padrão, tornando a análise mais precisa.
+
+### GLMM - Modelo linear generalizado misto
+
+O GLMM é apropriado para os dados, porque a variável é binomial (mortos / vivos), tem um efeito fixo a ser testado (tratamentos) e possui efeitos aleatórios (repetições).
+
+```{r}
+dados$repetição <- as.factor(dados$repetição)
+
+dados$resposta_binomial <- cbind(dados$mortos, dados$vivos)
+
+modelo_glmm <- glmer(resposta_binomial ~ tratamento + (1 | repetição),
+                     family = binomial(link = "logit"),
+                     data = dados_ajustados)
+
+summary(modelo_glmm)
+
+emm <- emmeans(modelo_glmm, ~ tratamento, type = "response")
+letras <- cld(emm, adjust = "tukey", Letters = LETTERS)
+
+print(letras)
+
+letras <- letras |>
+  mutate(tratamento = str_to_sentence(tratamento))
+
+ggplot(as.data.frame(letras), aes(x = reorder (tratamento, prob), y = prob)) +
+  geom_col(fill = "darkgreen", color = "black") +
+  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), width = 0.2) +
+  geom_text(aes(y = asymp.UCL, label = .group),
+          vjust = -0.5, size = 4, color = "black") +
+  labs(title = "Proporção de insetos mortos por tratamento (GLMM)",
+         y = "Proporção estimada de mortos", x = "Tratamentos") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylim(0, max(cld_df$upper.CL) * 1.05)
+```
+
+```{r}
+dispersion_param_glmm <- sum(residuals(modelo_glmm, type = "pearson")^2) / df.residual(modelo_glmm)
+print(dispersion_param_glmm)
+```
+
+O modelo apresentou um parâmetro de dispersão de **0.4918094**. Este valor, é inferior a 1, indicando claramente a presença de **subdispersão** nos dados, ou seja, a variabilidade observada é menor do que a esperada pela distribuição binomial padrão. Assim é necessário o ajuste do argumento.
+
+**Dispformula**: o modelo GLMM foi ajustado utilizando o argumento `dispformula = ~1`, que permite estimar um um valor de dispersão diferente do padrão. Assim, ele permite inferências mais precisas.
+
+```{r}
+dados_ajustados$mortos_ajustados <- ceiling(dados_ajustados$mortos_ajustados)
+dados_ajustados$vivos_ajustados <- ceiling(dados_ajustados$vivos_ajustados)
+
+modelo_glmm_disp <- glmmTMB(cbind(mortos_ajustados, vivos_ajustados) ~ tratamento + (1 | repetição),
+                          family = binomial(link = "logit"),
+                          data = dados_ajustados, 
+                          dispformula = ~1)
+
+summary(modelo_glmm_disp)
+
+overdisp_check <- performance::check_overdispersion(modelo_glmm_disp)
+print(overdisp_check)
+
+emm <- emmeans(modelo_glmm_disp, ~ tratamento, type = "response")
+print(emm)
+
+letras <- cld(emm, adjust = "tukey", Letters = LETTERS)
+print(letras)
+
+letras_df <- as.data.frame(letras) |>
+dplyr::rename(group_sig = .group,
+emmean = prob,
+lower.CL = asymp.LCL,
+upper.CL = asymp.UCL)
+
+letras_df <- letras_df |>
+  mutate(
+    grupo = case_when(
+      tratamento == "Controle" ~ "Controle",
+      emmean < 0.3 ~ "Grupo Baixa Mortalidade",
+      emmean >= 0.3 & emmean < 0.6 ~ "Grupo Média Mortalidade",
+      emmean >= 0.6 ~ "Grupo Alta Mortalidade",
+      TRUE ~ "Outros" 
+    )
+  )
+
+letras_df <- letras_df |>
+mutate(tratamento = str_to_sentence(tratamento))
+
+graf_glmm <- ggplot(letras_df, aes(x = reorder(tratamento, emmean), y = emmean, fill = grupo)) +
+geom_bar(stat = "identity", color = "black") +
+geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.2, position = position_dodge(0.9)) +
+geom_text(aes(y = upper.CL, label = group_sig),
+vjust = -0.5, size = 4, color = "black", fontface = "bold") +
+labs(title = "Proporção de insetos mortos por tratamento (GLMM Binomial com dispersão)", 
+x = "Tratamentos",
+y = "Proporção estimada de mortos",
+fill = "Grupos de tratamento") +
+theme_classic() +
+theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+axis.text.x = element_text(angle = 45, hjust = 1, size = 9)) +
+ylim(0, max(letras_df$upper.CL) * 1.05) +
+coord_flip() +
+scale_fill_manual(values = c(
+"Controle" = "grey",
+"Grupo Baixa Mortalidade" = "#99d594",
+"Grupo Média Mortalidade" = "#67a9cf",
+"Grupo Alta Mortalidade" = "#af8dc3",
+"Outros" = "lightgrey"
+))
+
+print(graf_glmm)
+```
+
+```{r}
+dispersion_param_modelado <- sigma(modelo_glmm_disp)
+print(paste("Parâmetro de dispersão (sigma) para Binomial com dispformula:", dispersion_param_modelado))
+```
+
+No modelo GLMM ajustado com `glmmTMB` e família binomial possui parâmetro de dispersão de **1**. Isso indica que, ao considerar os efeitos fixos e aleatórios, a variabilidade em seus dados está perfeitamente alinhada com o que a distribuição binomial prevê. Portanto, não há superdispersão nem subdispersão residual, e as inferências (p-valores e erros padrão) do seu modelo são consideradas válidas e precisas.
+
+### Comparação dos modelos
+
+#### Comparação do índice de dispersão
+
+Foi realizada a comparação do modelo GLM com distribuição quasibinomial e o modelo GLMM binomial com `dispformula`. O índice de dispersão do GLM foi de 0.318, indicando subdispersão, ou seja, variação abaixo da esperada, o que pode comprometer a validade estatística dos testes. Já o GLMM apresentou índice de dispersão de 0.863, próximo de 1, o que indica um ajuste mais adequado à variância dos dados. Portanto, o GLMM com dispersão é mais adequado por fornecer estimativas mais robustas e realistas para a inferência dos efeitos dos tratamentos.
+
+```{r}
+disp_glm <- sum(residuals(modelo_glm_qb, type = "pearson")^2) / df.residual(modelo_glm_qb)
+
+disp_glmm <- check_overdispersion(modelo_glmm_disp)
+
+cat("GLM quasibinomial - Índice de dispersão:", round(disp_glm, 3), "\n")
+cat("GLMM binomial - Índice de dispersão:", round(disp_glmm$dispersion_ratio, 3), "\n")
+```
+
+#### Modelo selecionado
+
+```{r}
+print(graf_glmm)
+```
+
+## Curva de Probit
+
+A Curva de Probit foi feita para os inseticidas abamex, avatar, benevia, delegate e joiner. A Curva de Probit é um modelo de regressão onde a reposta binária (morto / vivo) é transformada pela função `probit` para ajustar uma relação linear com a dose transformada em log. Comum para cálculo da CL50.
+
+### Abamex
+
+```{r}
+dados_ab <- data.frame(
+  conc = c(25, 50, 5, 40, 10, 1),      
+  total = c(60, 60, 60, 60, 60, 60),                   
+  mortos = c(36, 56, 17, 41, 27, 8)     
+)
+
+dados_ab$mort_prop <- dados_ab$mortos / dados_ab$total 
+dados_ab$lconc <- log10(dados_ab$conc)             
+
+print("Dados Iniciais:")
+print(dados_ab)
+
+modelo_reg_ab <- lm(mort_prop ~ lconc, data = dados_ab)
+
+print(anova(modelo_reg_ab))
+
+print(summary(modelo_reg_ab))
+
+modelo_probit_ab <- glm(
+  cbind(mortos, total - mortos) ~ lconc,
+  data = dados_ab,
+  family = binomial(link = "probit")
+)
+
+print(summary(modelo_probit_ab))
+
+pearson_chisq_ab <- sum(residuals(modelo_probit_ab, type = "pearson")^2)
+df_chisq_ab <- nrow(dados_ab) - length(coef(modelo_probit_ab))
+p_valor_chisq_ab <- pchisq(pearson_chisq_ab, df = df_chisq_ab, lower.tail = FALSE)
+
+cat(paste("Estatística Qui-quadrado de Pearson:", round(pearson_chisq_ab, 4), "\n"))
+cat(paste("Graus de Liberdade (DF):", df_chisq_ab, "\n"))
+cat(paste("Pr > ChiSq (p-valor):", round(p_valor_chisq_ab, 4), "\n\n"))
+
+probabilidades_ab <- c(
+  seq(from = 0.01, to = 0.10, by = 0.01),
+  seq(from = 0.15, to = 0.90, by = 0.05),
+  seq(from = 0.91, to = 0.99, by = 0.01)
+)
+
+cl_log_ab <- dose.p(modelo_probit_ab, p = probabilidades_ab)
+erros_padrao_log_ab <- attr(cl_log_ab, "SE")
+z_valor_ab <- qnorm(0.975) 
+limite_inf_log_ab <- cl_log_ab - z_valor_ab * erros_padrao_log_ab
+limite_sup_log_ab <- cl_log_ab + z_valor_ab * erros_padrao_log_ab
+
+tabela_escala_log10_ab <- data.frame(
+  Probabilidade = probabilidades_ab,
+  Log10_conc = cl_log_ab,
+  Limite_Inferior_95 = limite_inf_log_ab,
+  Limite_Superior_95 = limite_sup_log_ab
+)
+
+tabela_escala_conc_ab <- data.frame(
+  Probabilidade = probabilidades_ab,
+  Concentracao = 10^cl_log_ab,
+  Limite_Inferior_95 = 10^limite_inf_log_ab,
+  Limite_Superior_95 = 10^limite_sup_log_ab
+)
+
+options(digits = 6) 
+
+print(tabela_escala_log10_ab)
+
+print(tabela_escala_conc_ab)
+
+lconc_grafico_ab <- data.frame(lconc = seq(0, max(dados_ab$lconc) + 0.1, length.out = 200))
+
+predicoes_ab <- predict(modelo_probit_ab, newdata = lconc_grafico_ab, type = "link", se.fit = TRUE)
+
+z_valor_ab <- qnorm(0.975)
+lconc_grafico_ab$prob_predita_ab <- pnorm(predicoes_ab$fit)
+lconc_grafico_ab$prob_superior_ab <- pnorm(predicoes_ab$fit + z_valor_ab * predicoes_ab$se.fit)
+lconc_grafico_ab$prob_inferior_ab <- pnorm(predicoes_ab$fit - z_valor_ab * predicoes_ab$se.fit)
+
+
+lc50_log_ab <- as.numeric(dose.p(modelo_probit_ab, p = 0.50))
+
+lc50_conc_ab <- 10^lc50_log_ab
+
+x_lim_inferior_ab <- -1.5 
+x_lim_superior_ab <- 1    
+
+lconc_grafico_ab <- data.frame(lconc = seq(x_lim_inferior_ab, x_lim_superior_ab, length.out = 200))
+
+predicoes_ab <- predict(modelo_probit_ab, newdata = lconc_grafico_ab, type = "link", se.fit = TRUE)
+z_valor_ab <- qnorm(0.975)
+lconc_grafico_ab$prob_predita_ab <- pnorm(predicoes_ab$fit)
+lconc_grafico_ab$prob_superior_ab <- pnorm(predicoes_ab$fit + z_valor_ab * predicoes_ab$se.fit)
+lconc_grafico_ab$prob_inferior <- pnorm(predicoes_ab$fit - z_valor_ab * predicoes_ab$se.fit)
+
+grafico_probit_final_ab <- ggplot() +
+  geom_ribbon(data = lconc_grafico_ab,
+              aes(x = lconc, ymin = prob_inferior * 100, ymax = prob_superior_ab * 100),
+              fill = "skyblue", alpha = 0.5) +
+  geom_line(data = lconc_grafico_ab,
+            aes(x = lconc, y = prob_predita_ab * 100),
+            color = "blue", size = 1) +
+  geom_point(data = dados_ab,
+             aes(x = lconc, y = mort_prop * 100),
+             color = "red", size = 4) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "black", size = 0.7) +
+  geom_vline(xintercept = lc50_log_ab, linetype = "dashed", color = "black", size = 0.7) +
+  labs(
+    title = "Curva dose-resposta (Modelo Probit) - Abamex",
+    x = "Log10 (Concentração)",
+    y = "Mortalidade observada e prevista (%)"
+  ) +
+  annotate("text", 
+           x = lc50_log_ab, 
+           y = 45, 
+           label = paste("LC50 =", format(lc50_conc_ab, digits = 4)), 
+           hjust = -0.1,
+           vjust = 1,
+           fontface = "bold",
+           color = "black") +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10), expand = c(0, 0)) +
+  scale_x_continuous(limits = c(x_lim_inferior_ab, x_lim_superior_ab), breaks = seq(-4, 1, 0.5)) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+print(grafico_probit_final_ab)
+```
+
+### Avatar
+
+```{r}
+dados_av <- data.frame(
+  conc = c(0.1, 1, 5, 10, 25, 40, 0.3, 0.5, 0.7),      
+  total = c(60, 60, 60, 60, 60, 60, 60, 60, 60),                   
+  mortos = c(0, 4, 16, 1, 15, 14, 3, 8, 6)     
+)
+
+dados_av$mort_prop_av <- dados_av$mortos / dados_av$total 
+dados_av$lconc_av <- log10(dados_av$conc)             
+
+print("Dados Iniciais:")
+print(dados_av)
+
+modelo_reg_av <- lm(mort_prop_av ~ lconc_av, data = dados_av)
+
+print(anova(modelo_reg_av))
+
+print(summary(modelo_reg_av))
+
+modelo_probit_av <- glm(
+  cbind(mortos, total - mortos) ~ lconc_av,
+  data = dados_av,
+  family = binomial(link = "probit")
+)
+
+print(summary(modelo_probit_av))
+
+pearson_chisq_av <- sum(residuals(modelo_probit_av, type = "pearson")^2)
+df_chisq_av <- nrow(dados_av) - length(coef(modelo_probit_av))
+p_valor_chisq_av <- pchisq(pearson_chisq_av, df = df_chisq_av, lower.tail = FALSE)
+
+cat(paste("Estatística Qui-quadrado de Pearson:", round(pearson_chisq_av, 4), "\n"))
+cat(paste("Graus de Liberdade (DF):", df_chisq_av, "\n"))
+cat(paste("Pr > ChiSq (p-valor):", round(p_valor_chisq_av, 4), "\n\n"))
+
+probabilidades_av <- c(
+  seq(from = 0.01, to = 0.10, by = 0.01),
+  seq(from = 0.15, to = 0.90, by = 0.05),
+  seq(from = 0.91, to = 0.99, by = 0.01)
+)
+
+cl_log_av <- dose.p(modelo_probit_av, p = probabilidades_av)
+erros_padrao_log_av <- attr(cl_log_av, "SE")
+z_valor_av <- qnorm(0.975) 
+limite_inf_log_av <- cl_log_av - z_valor_av * erros_padrao_log_av
+limite_sup_log_av <- cl_log_av + z_valor_av * erros_padrao_log_av
+
+tabela_escala_log10_av <- data.frame(
+  Probabilidade = probabilidades_av,
+  Log10_conc = cl_log_av,
+  Limite_Inferior_95 = limite_inf_log_av,
+  Limite_Superior_95 = limite_sup_log_av
+)
+
+tabela_escala_conc_av <- data.frame(
+  Probabilidade = probabilidades_av,
+  Concentracao = 10^cl_log_av,
+  Limite_Inferior_95 = 10^limite_inf_log_av,
+  Limite_Superior_95 = 10^limite_sup_log_av
+)
+
+options(digits = 6) 
+
+print(tabela_escala_log10_av)
+
+print(tabela_escala_conc_av)
+
+lconc_grafico_av <- data.frame(lconc_av = seq(0, max(dados_av$lconc_av) + 0.1, length.out = 200))
+
+predicoes_av <- predict(modelo_probit_av, newdata = lconc_grafico_av, type = "link", se.fit = TRUE)
+
+z_valor_av <- qnorm(0.975)
+lconc_grafico_av$prob_predita_av <- pnorm(predicoes_av$fit)
+lconc_grafico_av$prob_superior_av <- pnorm(predicoes_av$fit + z_valor_av * predicoes_av$se.fit)
+lconc_grafico_av$prob_inferior_ab <- pnorm(predicoes_av$fit - z_valor_av * predicoes_av$se.fit)
+
+lc50_log_av <- as.numeric(dose.p(modelo_probit_av, p = 0.50))
+
+lc50_conc_av <- 10^lc50_log_av
+
+x_lim_inferior_av <- -1.5 
+x_lim_superior_av <- 1    
+
+lconc_grafico_av <- data.frame(lconc_av = seq(x_lim_inferior_av, x_lim_superior_av, length.out = 200))
+
+predicoes_av <- predict(modelo_probit_av, newdata = lconc_grafico_av, type = "link", se.fit = TRUE)
+z_valor_av <- qnorm(0.975)
+lconc_grafico_av$prob_predita_av <- pnorm(predicoes_av$fit)
+lconc_grafico_av$prob_superior_av <- pnorm(predicoes_av$fit + z_valor_av * predicoes_av$se.fit)
+lconc_grafico_av$prob_inferior_av <- pnorm(predicoes_av$fit - z_valor_av * predicoes_av$se.fit)
+
+grafico_probit_final_av <- ggplot() +
+  geom_ribbon(data = lconc_grafico_av,
+              aes(x = lconc_av, ymin = prob_inferior_av * 100, ymax = prob_superior_av * 100),
+              fill = "skyblue", alpha = 0.5) +
+  geom_line(data = lconc_grafico_av,
+            aes(x = lconc_av, y = prob_predita_av * 100),
+            color = "blue", size = 1) +
+  geom_point(data = dados_av,
+             aes(x = lconc_av, y = mort_prop_av * 100),
+             color = "red", size = 4) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "black", size = 0.7) +
+  geom_vline(xintercept = lc50_log_av, linetype = "dashed", color = "black", size = 0.7) +
+  labs(
+    title = "Curva dose-resposta (Modelo Probit) - Avatar",
+    x = "Log10 (Concentração)",
+    y = "Mortalidade observada e prevista (%)"
+  ) +
+  annotate("text", 
+           x = lc50_log_av, 
+           y = 45, 
+           label = paste("LC50 =", format(lc50_conc_av, digits = 4)), 
+           hjust = -0.1,
+           vjust = 1,
+           fontface = "bold",
+           color = "black") +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10), expand = c(0, 0)) +
+  scale_x_continuous(limits = c(x_lim_inferior_av, x_lim_superior_av), breaks = seq(-4, 1, 0.5)) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+print(grafico_probit_final_av)
+```
+
+### Benevia
+
+```{r}
+dados_be <- data.frame(
+  conc = c(0.1, 1, 5, 10, 25, 40, 60),      
+  total = c(60, 60, 60, 60, 60, 50, 50),                   
+  mortos = c(1, 2, 8, 5, 44, 6, 8)     
+)
+
+dados_be$mort_prop_be <- dados_be$mortos / dados_be$total 
+dados_be$lconc_be <- log10(dados_be$conc)             
+
+print("Dados Iniciais:")
+print(dados_be)
+
+modelo_reg_be <- lm(mort_prop_be ~ lconc_be, data = dados_be)
+
+print(anova(modelo_reg_be))
+
+print(summary(modelo_reg_be))
+
+modelo_probit_be <- glm(
+  cbind(mortos, total - mortos) ~ lconc_be,
+  data = dados_be,
+  family = binomial(link = "probit")
+)
+
+print(summary(modelo_probit_be))
+
+pearson_chisq_be <- sum(residuals(modelo_probit_be, type = "pearson")^2)
+df_chisq_be <- nrow(dados_be) - length(coef(modelo_probit_be))
+p_valor_chisq_be <- pchisq(pearson_chisq_be, df = df_chisq_be, lower.tail = FALSE)
+
+cat(paste("Estatística Qui-quadrado de Pearson:", round(pearson_chisq_be, 4), "\n"))
+cat(paste("Graus de Liberdade (DF):", df_chisq_be, "\n"))
+cat(paste("Pr > ChiSq (p-valor):", round(p_valor_chisq_be, 4), "\n\n"))
+
+probabilidades_be <- c(
+  seq(from = 0.01, to = 0.10, by = 0.01),
+  seq(from = 0.15, to = 0.90, by = 0.05),
+  seq(from = 0.91, to = 0.99, by = 0.01)
+)
+
+cl_log_be <- dose.p(modelo_probit_be, p = probabilidades_be)
+erros_padrao_log_be <- attr(cl_log_be, "SE")
+z_valor_be <- qnorm(0.975) 
+limite_inf_log_be <- cl_log_be - z_valor_be * erros_padrao_log_be
+limite_sup_log_be <- cl_log_be + z_valor_be * erros_padrao_log_be
+
+tabela_escala_log10_be <- data.frame(
+  Probabilidade = probabilidades_be,
+  Log10_conc = cl_log_be,
+  Limite_Inferior_95 = limite_inf_log_be,
+  Limite_Superior_95 = limite_sup_log_be
+)
+
+tabela_escala_conc_be <- data.frame(
+  Probabilidade = probabilidades_be,
+  Concentracao = 10^cl_log_be,
+  Limite_Inferior_95 = 10^limite_inf_log_be,
+  Limite_Superior_95 = 10^limite_sup_log_be
+)
+
+options(digits = 6) 
+
+print(tabela_escala_log10_be)
+
+print(tabela_escala_conc_be)
+
+lconc_grafico_be <- data.frame(lconc_be = seq(0, max(dados_be$lconc_be) + 0.1, length.out = 200))
+
+predicoes_be <- predict(modelo_probit_be, newdata = lconc_grafico_be, type = "link", se.fit = TRUE)
+
+z_valor_be <- qnorm(0.975)
+lconc_grafico_be$prob_predita_be <- pnorm(predicoes_be$fit)
+lconc_grafico_be$prob_superior_be <- pnorm(predicoes_be$fit + z_valor_be * predicoes_be$se.fit)
+lconc_grafico_be$prob_inferior_be <- pnorm(predicoes_be$fit - z_valor_be * predicoes_be$se.fit)
+
+lc50_log_be <- as.numeric(dose.p(modelo_probit_be, p = 0.50))
+
+lc50_conc_be <- 10^lc50_log_be
+
+x_lim_inferior_be <- -1.5 
+x_lim_superior_be <- 1    
+
+lconc_grafico_be <- data.frame(lconc_be = seq(x_lim_inferior_be, x_lim_superior_be, length.out = 200))
+
+predicoes_be <- predict(modelo_probit_be, newdata = lconc_grafico_be, type = "link", se.fit = TRUE)
+z_valor_be <- qnorm(0.975)
+lconc_grafico_be$prob_predita_be <- pnorm(predicoes_be$fit)
+lconc_grafico_be$prob_superior_be <- pnorm(predicoes_be$fit + z_valor_be * predicoes_be$se.fit)
+lconc_grafico_be$prob_inferior_be <- pnorm(predicoes_be$fit - z_valor_be * predicoes_be$se.fit)
+
+grafico_probit_final_be <- ggplot() +
+  geom_ribbon(data = lconc_grafico_be,
+              aes(x = lconc_be, ymin = prob_inferior_be * 100, ymax = prob_superior_be * 100),
+              fill = "skyblue", alpha = 0.5) +
+  geom_line(data = lconc_grafico_be,
+            aes(x = lconc_be, y = prob_predita_be * 100),
+            color = "blue", size = 1) +
+  geom_point(data = dados_be,
+             aes(x = lconc_be, y = mort_prop_be * 100),
+             color = "red", size = 4) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "black", size = 0.7) +
+  geom_vline(xintercept = lc50_log_be, linetype = "dashed", color = "black", size = 0.7) +
+  labs(
+    title = "Curva dose-resposta (Modelo Probit) - Benevia",
+    x = "Log10 (Concentração)",
+    y = "Mortalidade observada e prevista (%)"
+  ) +
+  annotate("text", 
+           x = lc50_log_be, 
+           y = 45, 
+           label = paste("LC50 =", format(lc50_conc_be, digits = 4)), 
+           hjust = -0.1,
+           vjust = 1,
+           fontface = "bold",
+           color = "black") +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10), expand = c(0, 0)) +
+  scale_x_continuous(limits = c(x_lim_inferior_be, x_lim_superior_be), breaks = seq(-4, 1, 0.5)) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+print(grafico_probit_final_be)
+```
+
+### Delegate
+
+```{r}
+dados_de <- data.frame(
+  conc = c(0.1, 1),      
+  total = c(60, 60),                   
+  mortos = c(0,0)     
+)
+
+dados_de$mort_prop_de <- dados_de$mortos / dados_de$total 
+dados_de$lconc_de <- log10(dados_de$conc)             
+
+print("Dados Iniciais:")
+print(dados_de)
+
+modelo_reg_de <- lm(mort_prop_de ~ lconc_de, data = dados_de)
+
+print(anova(modelo_reg_de))
+
+print(summary(modelo_reg_de))
+
+modelo_probit_de <- glm(
+  cbind(mortos, total - mortos) ~ lconc_de,
+  data = dados_de,
+  family = binomial(link = "probit")
+)
+
+print(summary(modelo_probit_de))
+
+pearson_chisq_de <- sum(residuals(modelo_probit_de, type = "pearson")^2)
+df_chisq_de <- nrow(dados_de) - length(coef(modelo_probit_de))
+p_valor_chisq_de <- pchisq(pearson_chisq_de, df = df_chisq_de, lower.tail = FALSE)
+
+cat(paste("Estatística Qui-quadrado de Pearson:", round(pearson_chisq_de, 4), "\n"))
+cat(paste("Graus de Liberdade (DF):", df_chisq_de, "\n"))
+cat(paste("Pr > ChiSq (p-valor):", round(p_valor_chisq_de, 4), "\n\n"))
+
+probabilidades_de <- c(
+  seq(from = 0.01, to = 0.10, by = 0.01),
+  seq(from = 0.15, to = 0.90, by = 0.05),
+  seq(from = 0.91, to = 0.99, by = 0.01)
+)
+
+cl_log_de <- dose.p(modelo_probit_de, p = probabilidades_de)
+erros_padrao_log_de <- attr(cl_log_de, "SE")
+z_valor_de <- qnorm(0.975) 
+limite_inf_log_de <- cl_log_de - z_valor_de * erros_padrao_log_de
+limite_sup_log_de <- cl_log_de + z_valor_de * erros_padrao_log_de
+
+tabela_escala_log10_de <- data.frame(
+  Probabilidade = probabilidades_de,
+  Log10_conc = cl_log_de,
+  Limite_Inferior_95 = limite_inf_log_de,
+  Limite_Superior_95 = limite_sup_log_de
+)
+
+tabela_escala_conc_de <- data.frame(
+  Probabilidade = probabilidades_de,
+  Concentracao = 10^cl_log_de,
+  Limite_Inferior_95 = 10^limite_inf_log_de,
+  Limite_Superior_95 = 10^limite_sup_log_de
+)
+
+options(digits = 6) 
+
+print(tabela_escala_log10_de)
+
+print(tabela_escala_conc_de)
+
+lconc_grafico_de <- data.frame(lconc_de = seq(0, max(dados_de$lconc_de) + 0.1, length.out = 200))
+
+predicoes_de <- predict(modelo_probit_de, newdata = lconc_grafico_de, type = "link", se.fit = TRUE)
+
+z_valor_de <- qnorm(0.975)
+lconc_grafico_de$prob_predita_de <- pnorm(predicoes_de$fit)
+lconc_grafico_de$prob_superior_de <- pnorm(predicoes_de$fit + z_valor_de * predicoes_de$se.fit)
+lconc_grafico_de$prob_inferior_de <- pnorm(predicoes_de$fit - z_valor_de * predicoes_de$se.fit)
+
+lc50_log_de <- as.numeric(dose.p(modelo_probit_de, p = 0.50))
+
+lc50_conc_de <- 10^lc50_log_de
+
+x_lim_inferior_de <- -1.5 
+x_lim_superior_de <- 1    
+
+lconc_grafico_de <- data.frame(lconc_de = seq(x_lim_inferior_de, x_lim_superior_de, length.out = 200))
+
+predicoes_de <- predict(modelo_probit_de, newdata = lconc_grafico_de, type = "link", se.fit = TRUE)
+z_valor_de <- qnorm(0.975)
+lconc_grafico_de$prob_predita_de <- pnorm(predicoes_de$fit)
+lconc_grafico_de$prob_superior_de <- pnorm(predicoes_de$fit + z_valor_de * predicoes_de$se.fit)
+lconc_grafico_de$prob_inferior_de <- pnorm(predicoes_de$fit - z_valor_de * predicoes_de$se.fit)
+
+grafico_probit_final_de <- ggplot() +
+  geom_ribbon(data = lconc_grafico_de,
+              aes(x = lconc_de, ymin = prob_inferior_de * 100, ymax = prob_superior_de * 100),
+              fill = "skyblue", alpha = 0.5) +
+  geom_line(data = lconc_grafico_de,
+            aes(x = lconc_de, y = prob_predita_de * 100),
+            color = "blue", size = 1) +
+  geom_point(data = dados_de,
+             aes(x = lconc_de, y = mort_prop_de * 100),
+             color = "red", size = 4) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "black", size = 0.7) +
+  geom_vline(xintercept = lc50_log_de, linetype = "dashed", color = "black", size = 0.7) +
+  labs(
+    title = "Curva dose-resposta (Modelo Probit) - Delegate",
+    x = "Log10 (Concentração)",
+    y = "Mortalidade observada e prevista (%)"
+  ) +
+  annotate("text", 
+           x = lc50_log_de, 
+           y = 45, 
+           label = paste("LC50 =", format(lc50_conc_de, digits = 4)), 
+           hjust = -0.1,
+           vjust = 1,
+           fontface = "bold",
+           color = "black") +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10), expand = c(0, 0)) +
+  scale_x_continuous(limits = c(x_lim_inferior_de, x_lim_superior_de), breaks = seq(-4, 1, 0.5)) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+print(grafico_probit_final_de)
+```
+
+### Joiner
+
+```{r}
+dados_jo <- data.frame(
+  conc = c(0.00375, 0.0075, 0.01, 0.015, 0.03, 0.07, 0.1, 1, 3, 5, 10),      
+  total = c(60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60),                   
+  mortos = c(43, 6, 14, 2, 12, 15, 26, 36, 45, 49, 46)     
+)
+
+dados_jo$mort_prop_jo <- dados_jo$mortos / dados_jo$total 
+dados_jo$lconc_jo <- log10(dados_jo$conc)             
+
+print("Dados Iniciais:")
+print(dados_jo)
+
+modelo_reg_jo <- lm(mort_prop_jo ~ lconc_jo, data = dados_jo)
+
+print(anova(modelo_reg_jo))
+
+print(summary(modelo_reg_jo))
+
+modelo_probit_jo <- glm(
+  cbind(mortos, total - mortos) ~ lconc_jo,
+  data = dados_jo,
+  family = binomial(link = "probit")
+)
+
+print(summary(modelo_probit_jo))
+
+pearson_chisq_jo <- sum(residuals(modelo_probit_jo, type = "pearson")^2)
+df_chisq_jo <- nrow(dados_jo) - length(coef(modelo_probit_jo))
+p_valor_chisq_jo <- pchisq(pearson_chisq_jo, df = df_chisq_jo, lower.tail = FALSE)
+
+cat(paste("Estatística Qui-quadrado de Pearson:", round(pearson_chisq_jo, 4), "\n"))
+cat(paste("Graus de Liberdade (DF):", df_chisq_jo, "\n"))
+cat(paste("Pr > ChiSq (p-valor):", round(p_valor_chisq_jo, 4), "\n\n"))
+
+probabilidades_jo <- c(
+  seq(from = 0.01, to = 0.10, by = 0.01),
+  seq(from = 0.15, to = 0.90, by = 0.05),
+  seq(from = 0.91, to = 0.99, by = 0.01)
+)
+
+cl_log_jo <- dose.p(modelo_probit_jo, p = probabilidades_jo)
+erros_padrao_log_jo <- attr(cl_log_jo, "SE")
+z_valor_jo <- qnorm(0.975) 
+limite_inf_log_jo <- cl_log_jo - z_valor_jo * erros_padrao_log_jo
+limite_sup_log_jo <- cl_log_jo + z_valor_jo * erros_padrao_log_jo
+
+tabela_escala_log10_jo <- data.frame(
+  Probabilidade = probabilidades_jo,
+  Log10_conc = cl_log_jo,
+  Limite_Inferior_95 = limite_inf_log_jo,
+  Limite_Superior_95 = limite_sup_log_jo
+)
+
+tabela_escala_conc_jo <- data.frame(
+  Probabilidade = probabilidades_jo,
+  Concentracao = 10^cl_log_jo,
+  Limite_Inferior_95 = 10^limite_inf_log_jo,
+  Limite_Superior_95 = 10^limite_sup_log_jo
+)
+
+options(digits = 6) 
+
+print(tabela_escala_log10_jo)
+
+print(tabela_escala_conc_jo)
+
+lconc_grafico_jo <- data.frame(lconc_jo = seq(0, max(dados_jo$lconc_jo) + 0.1, length.out = 200))
+
+predicoes_jo <- predict(modelo_probit_jo, newdata = lconc_grafico_jo, type = "link", se.fit = TRUE)
+
+z_valor_jo <- qnorm(0.975)
+lconc_grafico_jo$prob_predita_jo <- pnorm(predicoes_jo$fit)
+lconc_grafico_jo$prob_superior_jo <- pnorm(predicoes_jo$fit + z_valor_jo * predicoes_jo$se.fit)
+lconc_grafico_jo$prob_inferior_jo <- pnorm(predicoes_jo$fit - z_valor_jo * predicoes_jo$se.fit)
+
+lc50_log_jo <- as.numeric(dose.p(modelo_probit_jo, p = 0.50))
+
+lc50_conc_jo <- 10^lc50_log_jo
+
+x_lim_inferior_jo <- -1.5 
+x_lim_superior_jo <- 1    
+
+lconc_grafico_jo <- data.frame(lconc_jo = seq(x_lim_inferior_jo, x_lim_superior_jo, length.out = 200))
+
+predicoes_jo <- predict(modelo_probit_jo, newdata = lconc_grafico_jo, type = "link", se.fit = TRUE)
+z_valor_jo <- qnorm(0.975)
+lconc_grafico_jo$prob_predita_jo <- pnorm(predicoes_jo$fit)
+lconc_grafico_jo$prob_superior_jo <- pnorm(predicoes_jo$fit + z_valor_jo * predicoes_jo$se.fit)
+lconc_grafico_jo$prob_inferior_jo <- pnorm(predicoes_jo$fit - z_valor_jo * predicoes_jo$se.fit)
+
+grafico_probit_final_jo <- ggplot() +
+  geom_ribbon(data = lconc_grafico_jo,
+              aes(x = lconc_jo, ymin = prob_inferior_jo * 100, ymax = prob_superior_jo * 100),
+              fill = "skyblue", alpha = 0.5) +
+  geom_line(data = lconc_grafico_jo,
+            aes(x = lconc_jo, y = prob_predita_jo * 100),
+            color = "blue", size = 1) +
+  geom_point(data = dados_jo,
+             aes(x = lconc_jo, y = mort_prop_jo * 100),
+             color = "red", size = 4) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "black", size = 0.7) +
+  geom_vline(xintercept = lc50_log_jo, linetype = "dashed", color = "black", size = 0.7) +
+  labs(
+    title = "Curva dose-resposta (Modelo Probit) - Joiner",
+    x = "Log10 (Concentração)",
+    y = "Mortalidade observada e prevista (%)"
+  ) +
+  annotate("text", 
+           x = lc50_log_jo, 
+           y = 45, 
+           label = paste("LC50 =", format(lc50_conc_jo, digits = 4)), 
+           hjust = -0.1,
+           vjust = 1,
+           fontface = "bold",
+           color = "black") +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10), expand = c(0, 0)) +
+  scale_x_continuous(limits = c(x_lim_inferior_jo, x_lim_superior_jo), breaks = seq(-4, 1, 0.5)) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+print(grafico_probit_final_jo)
+```
+
+**Interpretação da curva dose-resposta:** a CL50 corresponde no gráfico do ponto de interseção entre a linha horizontal de referência a 50% da mortalidade dos insetos, e a curva gerada pelo modelo. Foi possível estimar a CL50 apenas para o joiner (CL50 = 0.2598). Isso se deve ao fato de possuir poucos pontos para a estimação do parâmetro.
+
+# Conclusão
+
+Considerando os agrupamentos dos tratamentos, de modo geral, a maioria dos inseticidas testados apresentam alta mortalidade contra as lagartas da traça do tomateiro. Diante dos resultados obtidos, observamos a necessidade de complementação dos dados.
